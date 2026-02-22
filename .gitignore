@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+
+# Logs and runtime data
+logs/
+data/
+
+# Plist contains secrets — use the .example version instead
+com.evocalize.anki-pipeline.plist
+
+# Claude Code local settings
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store

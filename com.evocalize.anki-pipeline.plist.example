@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.evocalize.anki-pipeline</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/evocalize/code/anki/.venv/bin/python</string>
+    <string>/Users/evocalize/code/anki/main.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/evocalize/code/anki</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GROQ_API_KEY</key>
+    <string>REPLACE_WITH_YOUR_GROQ_API_KEY</string>
+    <key>ANKI_PIPELINE_TOKEN</key>
+    <string>REPLACE_WITH_YOUR_SECRET_TOKEN</string>
+    <key>ANKI_PIPELINE_PORT</key>
+    <string>8766</string>
+    <key>ANKI_DECK_NAME</key>
+    <string>Podcast &amp; Video Notes</string>
+    <key>PATH</key>
+    <string>/Users/evocalize/code/anki/.venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/evocalize/code/anki/logs/launchd.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/evocalize/code/anki/logs/launchd.log</string>
+
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+</dict>
+</plist>

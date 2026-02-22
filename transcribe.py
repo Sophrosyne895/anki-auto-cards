@@ -1,0 +1,160 @@
+"""Transcript fetching: YouTube transcript API or yt-dlp + Groq Whisper."""
+import logging
+import os
+import re
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+from urllib.parse import urlparse
+
+from groq import Groq, RateLimitError
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+
+from config import GROQ_API_KEY, WHISPER_MODEL, MAX_AUDIO_MB, CHUNK_DURATION_SEC
+
+logger = logging.getLogger(__name__)
+
+_groq = Groq(api_key=GROQ_API_KEY)
+
+
+def _is_youtube(url: str) -> bool:
+    host = urlparse(url).netloc.lower()
+    return any(h in host for h in ("youtube.com", "youtu.be", "www.youtube.com"))
+
+
+def _extract_youtube_id(url: str) -> str:
+    parsed = urlparse(url)
+    if "youtu.be" in parsed.netloc:
+        return parsed.path.lstrip("/").split("?")[0]
+    qs = parsed.query
+    for part in qs.split("&"):
+        if part.startswith("v="):
+            return part[2:]
+    raise ValueError(f"Cannot extract YouTube video ID from: {url}")
+
+
+def _youtube_transcript(url: str) -> str:
+    video_id = _extract_youtube_id(url)
+    logger.info("Fetching YouTube transcript for video_id=%s", video_id)
+    try:
+        ytt = YouTubeTranscriptApi()
+        transcript = ytt.fetch(video_id)
+    except (TranscriptsDisabled, NoTranscriptFound):
+        logger.warning("No transcript available for %s; falling back to Whisper", video_id)
+        return _whisper_transcript(url)
+    text = " ".join(entry.text for entry in transcript)
+    logger.info("YouTube transcript fetched: %d chars", len(text))
+    return text
+
+
+FFMPEG = "/opt/homebrew/bin/ffmpeg"
+
+
+def _split_audio(audio_path: Path, chunk_dir: Path) -> list[Path]:
+    """Split audio into chunks using ffmpeg. Returns list of chunk paths."""
+    cmd = [
+        FFMPEG, "-y", "-i", str(audio_path),
+        "-f", "segment",
+        "-segment_time", str(CHUNK_DURATION_SEC),
+        "-c", "copy",
+        str(chunk_dir / "chunk_%03d.mp3"),
+    ]
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {result.stderr.decode()}")
+    return sorted(chunk_dir.glob("chunk_*.mp3"))
+
+
+def _parse_retry_seconds(message: str) -> float:
+    """Extract wait time from Groq rate limit message like 'try again in 4m35.5s'."""
+    m = re.search(r"try again in\s+(?:(\d+)m)?(\d+(?:\.\d+)?)s", message)
+    if m:
+        minutes = float(m.group(1) or 0)
+        seconds = float(m.group(2))
+        return minutes * 60 + seconds
+    return 60.0  # fallback
+
+
+def _transcribe_audio_file(audio_path: Path) -> str:
+    while True:
+        try:
+            with open(audio_path, "rb") as f:
+                response = _groq.audio.transcriptions.create(
+                    file=(audio_path.name, f),
+                    model=WHISPER_MODEL,
+                    response_format="text",
+                )
+            return response if isinstance(response, str) else response.text
+        except RateLimitError as e:
+            wait = _parse_retry_seconds(str(e)) + 5  # small buffer
+            logger.warning("Whisper rate limit hit; waiting %.0fs before retry", wait)
+            time.sleep(wait)
+
+
+def _whisper_transcript(url: str) -> str:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        audio_path = tmp / "audio.mp3"
+
+        logger.info("Downloading audio via yt-dlp: %s", url)
+        cmd = [
+            "yt-dlp",
+            "--no-playlist",
+            "-x", "--audio-format", "mp3",
+            "--audio-quality", "5",
+            "--ffmpeg-location", "/opt/homebrew/bin",
+            "-o", str(audio_path),
+            url,
+        ]
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"yt-dlp failed: {result.stderr.decode()}")
+
+        # Handle yt-dlp adding extension
+        candidates = list(tmp.glob("audio*"))
+        if not candidates:
+            raise RuntimeError("yt-dlp produced no output file")
+        audio_path = candidates[0]
+
+        size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+        logger.info("Downloaded audio: %.1f MB", size_mb)
+
+        if size_mb <= MAX_AUDIO_MB:
+            transcript = _transcribe_audio_file(audio_path)
+        else:
+            logger.info("Audio >%dMB; splitting into chunks", MAX_AUDIO_MB)
+            chunk_dir = tmp / "chunks"
+            chunk_dir.mkdir()
+            chunks = _split_audio(audio_path, chunk_dir)
+            parts = []
+            for i, chunk in enumerate(chunks):
+                logger.info("Transcribing chunk %d/%d", i + 1, len(chunks))
+                parts.append(_transcribe_audio_file(chunk))
+            transcript = " ".join(parts)
+
+        logger.info("Whisper transcript: %d chars", len(transcript))
+        return transcript
+
+
+def get_title(url: str) -> str:
+    """Fetch video/episode title via yt-dlp metadata (no download)."""
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--print", "title", "--no-download", url],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        logger.warning("Could not fetch title for %s", url)
+    return ""
+
+
+def get_transcript(url: str) -> tuple[str, str]:
+    """Route URL to appropriate transcript method. Returns (transcript, title)."""
+    title = get_title(url)
+    if _is_youtube(url):
+        return _youtube_transcript(url), title
+    return _whisper_transcript(url), title
