@@ -1,4 +1,4 @@
-"""Transcript fetching: YouTube transcript API or yt-dlp + Groq Whisper."""
+"""Transcript fetching: YouTube transcript API, article extraction, or yt-dlp + Groq Whisper."""
 import logging
 import os
 import re
@@ -12,6 +12,7 @@ from groq import Groq, RateLimitError
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
+import article as article_mod
 from config import GROQ_API_KEY, WHISPER_MODEL, MAX_AUDIO_MB, CHUNK_DURATION_SEC
 
 logger = logging.getLogger(__name__)
@@ -152,9 +153,45 @@ def get_title(url: str) -> str:
     return ""
 
 
+_AUDIO_VIDEO_EXTENSIONS = {
+    ".mp3", ".mp4", ".m4a", ".ogg", ".wav", ".flac", ".aac", ".opus",
+    ".webm", ".mkv", ".avi", ".mov",
+}
+
+_AUDIO_VIDEO_DOMAINS = {
+    "soundcloud.com", "www.soundcloud.com",
+    "podcasts.apple.com",
+    "open.spotify.com",
+    "anchor.fm", "www.anchor.fm",
+    "buzzsprout.com", "www.buzzsprout.com",
+    "twitch.tv", "www.twitch.tv",
+    "vimeo.com", "www.vimeo.com",
+    "dailymotion.com", "www.dailymotion.com",
+}
+
+
+def _is_audio_video_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.netloc.lower() in _AUDIO_VIDEO_DOMAINS:
+        return True
+    ext = Path(parsed.path).suffix.lower()
+    return ext in _AUDIO_VIDEO_EXTENSIONS
+
+
 def get_transcript(url: str) -> tuple[str, str]:
-    """Route URL to appropriate transcript method. Returns (transcript, title)."""
-    title = get_title(url)
+    """Route URL to appropriate transcript method. Returns (text, title)."""
     if _is_youtube(url):
+        title = get_title(url)
         return _youtube_transcript(url), title
-    return _whisper_transcript(url), title
+
+    if _is_audio_video_url(url):
+        title = get_title(url)
+        return _whisper_transcript(url), title
+
+    # Try article extraction for web pages
+    try:
+        return article_mod.get_article_text(url)
+    except Exception as e:
+        logger.warning("Article extraction failed (%s); falling back to Whisper: %s", e, url)
+        title = get_title(url)
+        return _whisper_transcript(url), title
