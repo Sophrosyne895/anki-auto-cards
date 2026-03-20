@@ -58,6 +58,14 @@ Prioritize (Rule 20):
 - Focus on the most important, surprising, or actionable insights
 - Skip trivial details: co-host names, timestamps, sponsors, filler anecdotes
 
+Academic rigor (college / graduate level):
+- Target the depth expected in an upper-division or graduate course
+- Emphasize underlying mechanisms, causal reasoning, and theoretical frameworks — not surface-level recall
+- Use precise, discipline-appropriate terminology (define jargon in the answer if needed)
+- Prefer "why" and "how" questions over "what" or "who" questions
+- When relevant, ask about assumptions, limitations, trade-offs, or counter-arguments
+- Connect ideas to broader principles or related fields where natural
+
 Plain text only — no markdown, no bullet points in answers.
 
 Respond ONLY with a JSON array. No explanation, no markdown fences.
