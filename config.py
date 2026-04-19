@@ -31,6 +31,16 @@ MAX_CARDS = 30
 # Notifications (ntfy.sh)
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
 
+# Obsidian summary
+OBSIDIAN_SUMMARY_DIR = Path(
+    os.environ.get(
+        "OBSIDIAN_SUMMARY_DIR",
+        os.path.expanduser(
+            "~/Library/CloudStorage/OneDrive-Personal/Apps/SecondBrain/Podcast & Video Summaries"
+        ),
+    )
+)
+
 # Queue
 PENDING_CARDS_FILE = DATA_DIR / "pending_cards.json"
 QUEUE_RETRY_INTERVAL = 60  # seconds

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import anki_connect
+import job_status
 import queue_store
 import worker
 from config import AUTH_TOKEN, LOG_FILE, PORT
@@ -56,7 +57,7 @@ app = FastAPI(title="Anki Auto-Card Pipeline", lifespan=lifespan)
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    if request.url.path == "/health":
+    if request.url.path in ("/health", "/jobs"):
         return await call_next(request)
     if AUTH_TOKEN:
         token = request.headers.get("X-Token", "")
@@ -84,6 +85,11 @@ async def health():
         "anki_running": anki_up,
         "pending_cards": pending,
     }
+
+
+@app.get("/jobs")
+async def jobs():
+    return {"jobs": job_status.get_all()}
 
 
 @app.post("/submit")

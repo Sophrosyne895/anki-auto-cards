@@ -13,6 +13,8 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
 import article as article_mod
+import job_status as _job_status
+import notify as _notify
 from config import GROQ_API_KEY, WHISPER_MODEL, MAX_AUDIO_MB, CHUNK_DURATION_SEC
 
 logger = logging.getLogger(__name__)
@@ -78,7 +80,7 @@ def _parse_retry_seconds(message: str) -> float:
     return 60.0  # fallback
 
 
-def _transcribe_audio_file(audio_path: Path) -> str:
+def _transcribe_audio_file(audio_path: Path, job_id: str = "", chunk_label: str = "") -> str:
     while True:
         try:
             with open(audio_path, "rb") as f:
@@ -91,15 +93,21 @@ def _transcribe_audio_file(audio_path: Path) -> str:
         except RateLimitError as e:
             wait = _parse_retry_seconds(str(e)) + 5  # small buffer
             logger.warning("Whisper rate limit hit; waiting %.0fs before retry", wait)
+            if job_id:
+                detail = f"{chunk_label} — rate limited, retrying in {wait / 60:.0f}m"
+                _job_status.update(job_id, "transcribing", detail)
+                _notify.send("Anki Pipeline", f"Transcribing {detail}")
             time.sleep(wait)
 
 
-def _whisper_transcript(url: str) -> str:
+def _whisper_transcript(url: str, job_id: str = "") -> str:
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         audio_path = tmp / "audio.mp3"
 
         logger.info("Downloading audio via yt-dlp: %s", url)
+        if job_id:
+            _job_status.update(job_id, "transcribing", "downloading audio")
         cmd = [
             "yt-dlp",
             "--no-playlist",
@@ -123,7 +131,9 @@ def _whisper_transcript(url: str) -> str:
         logger.info("Downloaded audio: %.1f MB", size_mb)
 
         if size_mb <= MAX_AUDIO_MB:
-            transcript = _transcribe_audio_file(audio_path)
+            if job_id:
+                _job_status.update(job_id, "transcribing", "whisper 1/1")
+            transcript = _transcribe_audio_file(audio_path, job_id, "chunk 1/1")
         else:
             logger.info("Audio >%dMB; splitting into chunks", MAX_AUDIO_MB)
             chunk_dir = tmp / "chunks"
@@ -131,8 +141,11 @@ def _whisper_transcript(url: str) -> str:
             chunks = _split_audio(audio_path, chunk_dir)
             parts = []
             for i, chunk in enumerate(chunks):
+                label = f"chunk {i + 1}/{len(chunks)}"
                 logger.info("Transcribing chunk %d/%d", i + 1, len(chunks))
-                parts.append(_transcribe_audio_file(chunk))
+                if job_id:
+                    _job_status.update(job_id, "transcribing", f"whisper {label}")
+                parts.append(_transcribe_audio_file(chunk, job_id, label))
             transcript = " ".join(parts)
 
         logger.info("Whisper transcript: %d chars", len(transcript))
@@ -178,15 +191,19 @@ def _is_audio_video_url(url: str) -> bool:
     return ext in _AUDIO_VIDEO_EXTENSIONS
 
 
-def get_transcript(url: str) -> tuple[str, str]:
+def get_transcript(url: str, job_id: str = "") -> tuple[str, str]:
     """Route URL to appropriate transcript method. Returns (text, title)."""
     if _is_youtube(url):
         title = get_title(url)
+        if job_id:
+            _job_status.update(job_id, "transcribing", title or url)
         return _youtube_transcript(url), title
 
     if _is_audio_video_url(url):
         title = get_title(url)
-        return _whisper_transcript(url), title
+        if job_id:
+            _job_status.update(job_id, "transcribing", title or url)
+        return _whisper_transcript(url, job_id), title
 
     # Try article extraction for web pages
     try:
@@ -194,4 +211,4 @@ def get_transcript(url: str) -> tuple[str, str]:
     except Exception as e:
         logger.warning("Article extraction failed (%s); falling back to Whisper: %s", e, url)
         title = get_title(url)
-        return _whisper_transcript(url), title
+        return _whisper_transcript(url, job_id), title
