@@ -8,6 +8,7 @@ from typing import Any
 
 import anki_connect
 import cards as card_gen
+import notify
 import queue_store
 import transcribe
 from config import QUEUE_RETRY_INTERVAL
@@ -34,26 +35,34 @@ def submit_job(url: str, job_id: str) -> None:
 def _process_job(job: Job) -> None:
     logger.info("[%s] Starting processing: %s", job.job_id, job.url)
 
+    label = job.url
+
     try:
         transcript, title = transcribe.get_transcript(job.url)
+        if title:
+            label = title
     except Exception:
         logger.exception("[%s] Transcription failed; dropping job", job.job_id)
+        notify.send("Anki Pipeline Failed", f"Transcription failed for {job.url}")
         return
 
     try:
         generated_cards = card_gen.generate_cards(transcript, job.url, title)
     except Exception:
         logger.exception("[%s] Card generation failed; dropping job", job.job_id)
+        notify.send("Anki Pipeline Failed", f"Card generation failed for {label}")
         return
 
     if not generated_cards:
         logger.warning("[%s] No cards generated", job.job_id)
+        notify.send("Anki Pipeline", f"No cards generated for {label}")
         return
 
     if anki_connect.is_anki_running():
         try:
             result = anki_connect.add_notes_bulk(generated_cards)
             logger.info("[%s] Cards pushed to Anki: %s", job.job_id, result)
+            notify.send("Anki Cards Added", f"{result['added']} cards from {label}")
         except Exception:
             logger.exception("[%s] AnkiConnect push failed; queuing cards", job.job_id)
             queue_store.enqueue_cards(generated_cards)
